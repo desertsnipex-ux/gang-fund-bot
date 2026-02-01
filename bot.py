@@ -2,15 +2,15 @@ import os
 import sqlite3
 import discord
 from discord.ext import commands
-from keep_alive import keep_alive  # optional keep-alive server
+from discord.ui import View, Button
+from keep_alive import keep_alive  # optional for Replit
 
 # Intents
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-# Bot prefix
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)  # custom help
 
 # Database setup
 DB_PATH = "database.db"
@@ -55,11 +55,12 @@ def update_balance(user_id, amount, add_contributed=False):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     if add_contributed:
-        c.execute("UPDATE users SET balance = balance + ?, contributed = contributed + ? WHERE user_id = ?",
-                  (amount, amount, user_id))
+        c.execute(
+            "UPDATE users SET balance = balance + ?, contributed = contributed + ? WHERE user_id = ?",
+            (amount, amount, user_id)
+        )
     else:
-        c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?",
-                  (amount, user_id))
+        c.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
     conn.commit()
     conn.close()
 
@@ -71,61 +72,52 @@ def total_balance():
     conn.close()
     return result[0] if result[0] else 0
 
-# Events
-@bot.event
-async def on_ready():
-    print(f"✅ Bot is online as {bot.user}")
+# -------------------------
+# Helper for Embeds
+# -------------------------
+def create_embed(title, description, color=0x00ff00):
+    return discord.Embed(title=title, description=description, color=color)
 
+# -------------------------
+# Interactive View
+# -------------------------
+class BalanceView(View):
+    def __init__(self, user):
+        super().__init__(timeout=None)
+        self.user = user
+
+    @discord.ui.button(label="💰 Check Balance", style=discord.ButtonStyle.green)
+    async def balance_button(self, interaction: discord.Interaction, button: Button):
+        add_user_if_not_exists(self.user.id)
+        bal = get_balance(self.user.id)
+        await interaction.response.send_message(embed=create_embed("Balance", f"{self.user.mention} has {bal} coins."), ephemeral=True)
+
+    @discord.ui.button(label="📈 Check Contributions", style=discord.ButtonStyle.blurple)
+    async def contrib_button(self, interaction: discord.Interaction, button: Button):
+        add_user_if_not_exists(self.user.id)
+        contrib = get_contributed(self.user.id)
+        await interaction.response.send_message(embed=create_embed("Contributions", f"{self.user.mention} has contributed {contrib} coins in total."), ephemeral=True)
+
+    @discord.ui.button(label="💎 Total Gang Fund", style=discord.ButtonStyle.gold)
+    async def total_button(self, interaction: discord.Interaction, button: Button):
+        total_bal = total_balance()
+        await interaction.response.send_message(embed=create_embed("Gang Fund Total", f"Total balance of all users: {total_bal} coins"), ephemeral=True)
+
+# -------------------------
 # Commands
+# -------------------------
 @bot.command()
-@commands.has_permissions(administrator=True)
-async def add(ctx, member: discord.Member, amount: int):
-    if amount <= 0:
-        await ctx.send("❌ Amount must be positive.")
-        return
-    add_user_if_not_exists(member.id)
-    update_balance(member.id, amount, add_contributed=True)
-    await ctx.send(f"✅ Added {amount} coins to {member.mention}'s balance.")
+async def menu(ctx):
+    """Show interactive menu with buttons."""
+    view = BalanceView(ctx.author)
+    await ctx.send(embed=create_embed("Gang Fund Menu", "Click a button below to interact with the bot!"), view=view)
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def take(ctx, member: discord.Member, amount: int):
-    if amount <= 0:
-        await ctx.send("❌ Amount must be positive.")
-        return
-    add_user_if_not_exists(member.id)
-    balance = get_balance(member.id)
-    if balance < amount:
-        await ctx.send("❌ User does not have enough balance.")
-        return
-    update_balance(member.id, -amount)
-    await ctx.send(f"✅ Took {amount} coins from {member.mention}'s balance.")
+# Optional: keep old commands if you want
+# @bot.command() ...
 
-@bot.command()
-async def balance(ctx, member: discord.Member = None):
-    member = member or ctx.author
-    add_user_if_not_exists(member.id)
-    bal = get_balance(member.id)
-    await ctx.send(f"💰 {member.mention} has {bal} coins.")
-
-@bot.command()
-async def contributed(ctx, member: discord.Member = None):
-    member = member or ctx.author
-    add_user_if_not_exists(member.id)
-    contrib = get_contributed(member.id)
-    await ctx.send(f"📈 {member.mention} has contributed {contrib} coins in total.")
-
-@bot.command()
-async def total(ctx):
-    total_bal = total_balance()
-    await ctx.send(f"💎 Total balance of all users: {total_bal} coins")
-
-# Initialize DB
+# -------------------------
+# Initialize
+# -------------------------
 init_db()
-
-# Start keep-alive server
 keep_alive()
-
-# Run bot
-TOKEN = os.getenv("DISCORD_TOKEN")
-bot.run(TOKEN)
+bot.run(os.getenv("DISCORD_TOKEN"))
